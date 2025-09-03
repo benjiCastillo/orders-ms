@@ -1,22 +1,106 @@
-import { Injectable, OnModuleInit, Logger, HttpStatus } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  Logger,
+  HttpStatus,
+  Inject,
+} from '@nestjs/common';
+import { PRODUCTS_SERVICE } from '../../config/services';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { PrismaClient } from '@prisma/client';
 import { Order } from '@prisma/client';
 import { RpcException } from '@nestjs/microservices';
 import { OrderPaginationDto } from './dto/order-pagination.dto';
 import { ChangeOrderStatusDto } from './dto/change-orderostatus.dto';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+
+interface Product {
+  id: number;
+  name: string;
+  price: number;
+}
 
 @Injectable()
 export class OrdersService extends PrismaClient implements OnModuleInit {
   private readonly logger = new Logger('OrdersService');
+
+  constructor(
+    @Inject(PRODUCTS_SERVICE)
+    private readonly productsService: ClientProxy,
+  ) {
+    super();
+  }
 
   async onModuleInit() {
     await this.$connect();
     this.logger.log('OrdersService connected to the database');
   }
 
-  create(createOrderDto: CreateOrderDto) {
-    return this.order.create({ data: createOrderDto });
+  async create(createOrderDto: CreateOrderDto) {
+    try {
+      const productIds = createOrderDto.items.map((item) => item.productId);
+
+      const products: Product[] = await firstValueFrom<Product[]>(
+        this.productsService.send({ cmd: 'validate_products' }, productIds),
+      );
+
+      const totalAmount = createOrderDto.items.reduce((acc, orderItem) => {
+        const price: number =
+          products.find((product) => product.id === orderItem.productId)
+            ?.price || 0;
+
+        return price * orderItem.quantity;
+      }, 0);
+
+      const totalItems = createOrderDto.items.reduce((acc, orderItem) => {
+        return acc + orderItem.quantity;
+      }, 0);
+      // transaction
+
+      const order = await this.order.create({
+        data: {
+          totalAmount,
+          totalItems,
+          OrderItems: {
+            createMany: {
+              data: createOrderDto.items.map((item) => ({
+                productId: item.productId,
+                quantity: item.quantity,
+                price: Number(
+                  products.find((product) => product.id === item.productId)
+                    ?.price || 0,
+                ),
+              })),
+            },
+          },
+        },
+
+        include: {
+          OrderItems: {
+            select: {
+              price: true,
+              quantity: true,
+              productId: true,
+            },
+          },
+        },
+      });
+
+      return {
+        ...order,
+        OrderItems: order.OrderItems.map((orderItem) => ({
+          ...orderItem,
+          name:
+            products.find((product) => product.id === orderItem.productId)
+              ?.name || '',
+        })),
+      };
+    } catch (error) {
+      throw new RpcException(error as object);
+    }
+
+    //  return this.order.create({ data: createOrderDto });
   }
 
   async findAll(paginationDto: OrderPaginationDto) {
