@@ -5,10 +5,9 @@ import {
   HttpStatus,
   Inject,
 } from '@nestjs/common';
-import { PRODUCTS_SERVICE } from '../../config/services';
+import { NATS_SERVICE } from '../../config/services';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { PrismaClient } from '@prisma/client';
-import { Order } from '@prisma/client';
 import { RpcException } from '@nestjs/microservices';
 import { OrderPaginationDto } from './dto/order-pagination.dto';
 import { ChangeOrderStatusDto } from './dto/change-orderostatus.dto';
@@ -26,8 +25,8 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
   private readonly logger = new Logger('OrdersService');
 
   constructor(
-    @Inject(PRODUCTS_SERVICE)
-    private readonly productsService: ClientProxy,
+    @Inject(NATS_SERVICE)
+    private readonly client: ClientProxy,
   ) {
     super();
   }
@@ -42,7 +41,7 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
       const productIds = createOrderDto.items.map((item) => item.productId);
 
       const products: Product[] = await firstValueFrom<Product[]>(
-        this.productsService.send({ cmd: 'validate_products' }, productIds),
+        this.client.send({ cmd: 'validate_products' }, productIds),
       );
 
       const totalAmount = createOrderDto.items.reduce((acc, orderItem) => {
@@ -129,15 +128,42 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
     };
   }
 
-  async findOne(id: string): Promise<Order> {
-    const order = await this.order.findFirst({ where: { id } });
+  async findOne(id: string) {
+    const order = await this.order.findFirst({
+      where: { id },
+      include: {
+        OrderItems: {
+          select: {
+            price: true,
+            quantity: true,
+            productId: true,
+          },
+        },
+      },
+    });
     if (!order) {
       throw new RpcException({
         message: `Order with id ${id} not found`,
         status: HttpStatus.NOT_FOUND,
       });
     }
-    return order;
+
+    const products: Product[] = await firstValueFrom<Product[]>(
+      this.client.send(
+        { cmd: 'validate_products' },
+        order.OrderItems.map((orderItem) => orderItem.productId),
+      ),
+    );
+
+    return {
+      ...order,
+      OrderItems: order.OrderItems.map((orderItem) => ({
+        ...orderItem,
+        name:
+          products.find((product) => product.id === orderItem.productId)
+            ?.name || '',
+      })),
+    };
   }
 
   async changeOrderStatus(changeOrderStatusDto: ChangeOrderStatusDto) {
