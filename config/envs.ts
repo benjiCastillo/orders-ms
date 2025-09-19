@@ -29,8 +29,6 @@ if (envVarsResult.error) {
 
 const envVars = envVarsResult.value;
 
-console.log(envVars.PORT);
-
 export const envs = {
   port: envVars.PORT,
   databaseUrl: envVars.DATABASE_URL,

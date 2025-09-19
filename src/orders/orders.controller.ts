@@ -42,7 +42,6 @@ export class OrdersController {
     @Payload()
     paidOrderDto: PaidOrderDto,
   ) {
-    console.log({ paidOrderDto });
     return await this.ordersService.paidOrder(paidOrderDto);
   }
 }
