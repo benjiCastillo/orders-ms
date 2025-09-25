@@ -5,7 +5,7 @@ import {
   HttpStatus,
   Inject,
 } from '@nestjs/common';
-import { NATS_SERVICE } from '../../config/services';
+import { NATS_SERVICE } from '../config/services';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderStatus, PrismaClient } from '@prisma/client';
 import { RpcException } from '@nestjs/microservices';
